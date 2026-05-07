@@ -4,48 +4,46 @@ Standalone ERA5 weather forecasting inference script for U-Cast.
 
 Runs autoregressive ensemble inference with a trained DhariwalUNet checkpoint,
 producing an xarray Dataset of forecasts. Optionally scores predictions with
-area-weighted CRPS and ensemble-mean RMSE (--score) and logs to W&B (--wandb_project).
-
+area-weighted CRPS and ensemble-mean RMSE (--score) and logs to W&B (--wandb-project).
 
 Install:
     pip install torch xarray zarr einops tqdm pyyaml huggingface_hub wandb gcsfs
 
 Files needed:
-    1. Checkpoint (.ckpt) — local path or ``hf:<repo>/<file>`` to download from HuggingFace Hub
-    2. ERA5 data directory — local path or GCS (gs://weatherbench2/datasets/era5)
+    1. Checkpoint (.ckpt) — local path or ``hf:<repo>/<file>`` to download from HuggingFace Hub (default)
+    2. ERA5 data directory — local path or GCS (gs://weatherbench2/datasets/era5; default)
     3. Normalization statistics — included in this repo at ``data/stats/`` (used by default)
 
 Quick start (download checkpoint from HuggingFace, use GCS data):
 
-    python run_inference_standalone.py \\
-        --ckpt_path hf:salvaRC/u-cast/ucast_era5.ckpt \\
-        --data_dir gs://weatherbench2/datasets/era5 \\
-        --ic_start_dates 2020-01-01 \\
-        --output_path forecasts.nc
+    python run_inference_standalone.py \
+        --ckpt-path hf:salvaRC/u-cast/ucast.ckpt \
+        --data-dir gs://weatherbench2/datasets/era5 \
+        --ic-start-dates 2020-01-01
 
-With local data and scoring:
+With local data, ensembling, more initial conditions, and scoring & logging to Weights & Biases:
 
-    python run_inference_standalone.py \\
-        --ckpt_path hf:salvaRC/u-cast/ucast_era5.ckpt \\
-        --data_dir /path/to/era5/data \\
-        --prediction_horizon 30 \\
-        --ensemble_size 10 \\
-        --ic_start_dates 2020-01-01 2020-04-01 2020-07-01 2020-10-01 \\
-        --output_path forecasts.nc \\
-        --score --wandb_project=ERA5-Eval
+    python run_inference_standalone.py \
+        --ckpt-path hf:salvaRC/u-cast/ucast.ckpt \
+        --data-dir /path/to/era5/data \
+        --prediction-horizon 30 \
+        --ensemble-size 10 \
+        --ic-start-dates 2020-01-01 2020-04-01 2020-07-01 2020-10-01 \
+        --score --wandb-project=ERA5-Eval
 
 Deep ensemble (multiple checkpoints, members split evenly across models):
 
-    python run_inference_standalone.py \\
-        --ckpt_path hf:salvaRC/u-cast/ucast.ckpt \\
-        --ckpt_paths hf:salvaRC/u-cast/ucast_de2.ckpt hf:salvaRC/u-cast/ucast_de3.ckpt hf:salvaRC/u-cast/ucast_de4.ckpt \\
-        --data_dir /path/to/era5/data \\
-        --ensemble_size 10 \\
-        --ic_start_dates 2020-01-01
+    python run_inference_standalone.py \
+        --ckpt-path hf:salvaRC/u-cast/ucast.ckpt \
+        --ckpt-paths hf:salvaRC/u-cast/ucast_de2.ckpt hf:salvaRC/u-cast/ucast_de3.ckpt hf:salvaRC/u-cast/ucast_de4.ckpt \
+        --data-dir /path/to/era5/data \
+        --ensemble-size 10 \
+        --ic-start-dates 2020-01-01
 
-Forecasts are not saved to disk by default; add ``--output_path forecasts.nc`` to save.
+-> Forecasts are not saved to disk by default; add ``--output-path forecasts.nc`` to save.
+-> Set the GPU device with e.g. ``--device cuda:1``.
 
-Compute (1.5-degree, H200 GPU): ~11 sec/IC for 10 members, 30 steps. ~20 GB GPU RAM.
+Compute (1.5-degree, H200 GPU): ~10 sec/IC for 10 member ensemble, 30 steps. ~12 GB GPU RAM.
 
 Note: Models were trained on data up to 2019. Degradation is expected for dates far
 from the training period, especially at short lead times. 2020 is recommended.
@@ -843,7 +841,10 @@ def run_autoregressive_inference(
 def _distribute_members(total_members: int, n_models: int) -> List[int]:
     """Split ``total_members`` evenly across ``n_models``; extras go to first models."""
     base, remainder = divmod(total_members, n_models)
-    return [base + (1 if i < remainder else 0) for i in range(n_models)]
+    model_members = [base + (1 if i < remainder else 0) for i in range(n_models)]
+    if any([m == 0 for m in model_members]):
+        raise ValueError(f"Ensemble size {total_members} too small for {n_models} models. Increase --ensemble-size")
+    return model_members
 
 
 def _run_deep_ensemble_all_ics(
@@ -1123,62 +1124,62 @@ def log_scores_to_wandb(
 def main():
     parser = argparse.ArgumentParser(description="ERA5 standalone inference")
     parser.add_argument(
-        "--ckpt_path",
+        "--ckpt-path",
         type=str,
-        required=True,
+        default="hf://salv47/u-cast/ucast.ckpt",
         help="Path to the primary model checkpoint (.ckpt). "
-        "Also used as the first entry when --ckpt_paths is provided.",
+        "Also used as the first entry when --ckpt-paths is provided.",
     )
     parser.add_argument(
-        "--config_path",
+        "--config-path",
         type=str,
         default="configs/config.yaml",
         help="Path to the config YAML (default: configs/config.yaml from this repo). "
-        "Reused for all deep-ensemble models unless --config_paths is provided.",
+        "Reused for all deep-ensemble models unless --config-paths is provided.",
     )
     parser.add_argument(
-        "--ckpt_paths",
+        "--ckpt-paths",
         type=str,
         nargs="+",
         default=None,
         help="Deep ensemble: additional checkpoint paths (one per model). "
-        "Combined with --ckpt_path as the first entry.",
+        "Combined with --ckpt-path as the first entry.",
     )
     parser.add_argument(
-        "--config_paths",
+        "--config-paths",
         type=str,
         nargs="+",
         default=None,
-        help="Deep ensemble: config YAML paths matching --ckpt_paths. "
-        "If omitted, --config_path is reused for every model.",
+        help="Deep ensemble: config YAML paths matching --ckpt-paths. "
+        "If omitted, --config-path is reused for every model.",
     )
     parser.add_argument(
-        "--data_dir", type=str, nargs="+", required=True, help="Data directory (local or GCS). Can pass multiple."
+        "--data-dir", type=str, nargs="+", default=["gs://weatherbench2/datasets/era5"], help="Data directory (local or GCS). Can pass multiple."
     )
     parser.add_argument(
-        "--stats_dir",
+        "--stats-dir",
         type=str,
         default="data/stats",
         help="Directory with normalization statistics (default: data/wb2/stats from this repo)",
     )
     parser.add_argument(
-        "--prediction_horizon", type=int, default=None, help="Number of autoregressive steps (default: from config)"
+        "--prediction-horizon", type=int, default=30, help="Number of autoregressive steps (default: 30, so 15 days at 12h resolution)"
     )
     parser.add_argument(
-        "--ensemble_size",
+        "--ensemble-size",
         type=int,
-        default=None,
-        help="Number of ensemble members (default: from config num_predictions)",
+        default=1,
+        help="Number of ensemble members (default: 1)",
     )
     parser.add_argument(
-        "--ic_start_dates",
+        "--ic-start-dates",
         type=str,
         nargs="+",
         default=["2020-01-01"],
         help="Initial condition datetimes (last input time), e.g. 2022-01-01T00 2022-07-01T12. "
         "Default: single date from test_slice start.",
     )
-    parser.add_argument("--output_path", type=str, default=None, help="Output path for the xarray Dataset (.nc)")
+    parser.add_argument("--output-path", type=str, default=None, help="Output path for the xarray Dataset (.nc)")
     parser.add_argument(
         "--device",
         type=str,
@@ -1186,10 +1187,10 @@ def main():
     )
     parser.add_argument("--score", action="store_true", help="Compute area-weighted CRPS and RMSE")
     parser.add_argument(
-        "--wandb_project", type=str, default=None, help="wandb project name (enables wandb logging of scores)"
+        "--wandb-project", type=str, default=None, help="wandb project name (enables wandb logging of scores)"
     )
-    parser.add_argument("--wandb_entity", type=str, default=None)
-    parser.add_argument("--wandb_run_name", type=str, default=None)
+    parser.add_argument("--wandb-entity", type=str, default=None)
+    parser.add_argument("--wandb-run-name", type=str, default=None)
     parser.add_argument("--seed", type=int, default=77)
     args = parser.parse_args()
 
@@ -1199,8 +1200,8 @@ def main():
         config_path_list = [args.config_path] + args.config_paths
         if len(config_path_list) != len(ckpt_path_list):
             raise ValueError(
-                f"--config_paths length ({len(config_path_list) - 1}) must match "
-                f"--ckpt_paths length ({len(ckpt_path_list) - 1})"
+                f"--config-paths length ({len(config_path_list) - 1}) must match "
+                f"--ckpt-paths length ({len(ckpt_path_list) - 1})"
             )
     else:
         config_path_list = [args.config_path] * len(ckpt_path_list)
@@ -1218,18 +1219,14 @@ def main():
     cfg = cfg_list[0]  # primary config used for data/normalizer setup
 
     dm_cfg = cfg["datamodule"]
-    module_cfg = cfg["module"]
 
     var_names = list(dm_cfg["input_vars"])  # = output_vars for this config
     window = dm_cfg["window"]
     hourly_resolution = dm_cfg["hourly_resolution"]
-    prediction_horizon = args.prediction_horizon or dm_cfg.get("prediction_horizon", 15)
-    ensemble_size = args.ensemble_size or module_cfg.get("num_predictions", 5)
+    prediction_horizon = args.prediction_horizon
+    ensemble_size = args.ensemble_size
 
-    log.info(
-        f"Config: window={window}, hourly_resolution={hourly_resolution}h, "
-        f"prediction_horizon={prediction_horizon}, ensemble_size={ensemble_size}"
-    )
+    log.info(f"Config: {window=}, {hourly_resolution=}h, {prediction_horizon=}, {ensemble_size=}")
     log.info(f"Device: {args.device}")
 
     # Set seed
@@ -1254,8 +1251,7 @@ def main():
     normalizer = setup_normalizer(args.stats_dir, var_names, ds, device=args.device)
 
     # ── Load static conditions ──
-    static_fields = list(dm_cfg.get("static_fields", ["land_sea_mask", "geopotential_at_surface"]))
-    static_cond = load_static_conditions(ds, static_fields)
+    static_cond = load_static_conditions(ds, list(dm_cfg["static_fields"]))
 
     # ── Determine IC dates ──
     ic_dates = [np.datetime64(d) for d in args.ic_start_dates]
@@ -1283,7 +1279,8 @@ def main():
             device=args.device,
         )
     else:
-        model = load_model_from_checkpoint(args.ckpt_path, cfg, device=args.device)
+        assert len(ckpt_path_list) == 1, "Single-model mode should have exactly one checkpoint path"
+        model = load_model_from_checkpoint(ckpt_path_list[0], cfg, device=args.device)
         log.info(f"Model loaded. Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
         all_results = []
@@ -1361,6 +1358,7 @@ def main():
                     "ckpt_paths": ckpt_path_list,
                     "ensemble_size": ensemble_size,
                     "ic_dates": [str(d) for d in ic_dates],
+                    "n_ics": len(ic_dates),
                     "prediction_horizon": prediction_horizon,
                     "n_vars": len(var_names),
                     "seed": args.seed,
