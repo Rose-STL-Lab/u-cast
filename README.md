@@ -1,6 +1,6 @@
 <div align="center">
 
-# U-Cast: A Surprisingly Simple and Efficient Frontier Probabilistic AI Weather Forecaster
+# U-Cast: A Surprisingly Simple and Efficient Frontier Probabilistic AI Weather Forecaster (ICML 2026)
 
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)

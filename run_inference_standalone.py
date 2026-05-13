@@ -661,7 +661,6 @@ def load_model_from_checkpoint(ckpt_path: str, cfg: dict, device: str = "cuda") 
     """
     model_cfg = cfg["model"]
     dm_cfg = cfg["datamodule"]
-    module_cfg = cfg["module"]
 
     var_names = list(dm_cfg["input_vars"])
     window = dm_cfg["window"]
@@ -688,39 +687,34 @@ def load_model_from_checkpoint(ckpt_path: str, cfg: dict, device: str = "cuda") 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     state_dict = ckpt["state_dict"]
 
-    # Extract EMA weights if available
-    use_ema = module_cfg.get("use_ema", True)
-    if use_ema:
-        ema_prefix = "model_ema."
-        ema_buffers = {k[len(ema_prefix) :]: v for k, v in state_dict.items() if k.startswith(ema_prefix)}
-        # Build mapping from dotless EMA buffer name → model parameter name
-        # The EMA stores parameters with dots removed from names and prefixed with "model."
-        # We need to match them back to the actual model parameter names.
-        # The checkpoint model params are stored as "model.<param_name>" in state_dict
-        model_param_names = [k for k in state_dict.keys() if k.startswith("model.") and not k.startswith("model_ema.")]
-        ema_name_to_param = {}
-        for param_name in model_param_names:
-            # Remove "model." prefix to get the actual param name inside DhariwalUNet
-            short_name = param_name[len("model.") :]
-            # The EMA stores names with dots replaced by nothing
-            ema_key = short_name.replace(".", "")
-            ema_name_to_param[ema_key] = short_name
+    # Extract EMA weights
+    ema_prefix = "model_ema."
+    ema_buffers = {k[len(ema_prefix) :]: v for k, v in state_dict.items() if k.startswith(ema_prefix)}
+    # Build mapping from dotless EMA buffer name → model parameter name
+    # The EMA stores parameters with dots removed from names and prefixed with "model."
+    # We need to match them back to the actual model parameter names.
+    # The checkpoint model params are stored as "model.<param_name>" in state_dict
+    model_param_names = [k for k in state_dict.keys() if k.startswith("model.") and not k.startswith("model_ema.")]
+    ema_name_to_param = {}
+    for param_name in model_param_names:
+        # Remove "model." prefix to get the actual param name inside DhariwalUNet
+        short_name = param_name[len("model.") :]
+        # The EMA stores names with dots replaced by nothing
+        ema_key = short_name.replace(".", "")
+        ema_name_to_param[ema_key] = short_name
 
-        loaded_sd = {}
-        for ema_key, ema_val in ema_buffers.items():
-            if ema_key in ("decay", "num_updates"):
-                continue
-            if ema_key in ema_name_to_param:
-                loaded_sd[ema_name_to_param[ema_key]] = ema_val
+    loaded_sd = {}
+    for ema_key, ema_val in ema_buffers.items():
+        if ema_key in ("decay", "num_updates"):
+            continue
+        if ema_key in ema_name_to_param:
+            loaded_sd[ema_name_to_param[ema_key]] = ema_val
 
-        missing, unexpected = model.load_state_dict(loaded_sd, strict=True)
-        if missing:
-            log.warning(f"Missing keys when loading EMA weights: {missing[:5]}... ({len(missing)} total)")
-        if unexpected:
-            log.warning(f"Unexpected keys: {unexpected[:5]}...")
-
-    else:
-        _load_model_weights(model, state_dict)
+    missing, unexpected = model.load_state_dict(loaded_sd, strict=True)
+    if missing:
+        log.warning(f"Missing keys when loading EMA weights: {missing[:5]}... ({len(missing)} total)")
+    if unexpected:
+        log.warning(f"Unexpected keys: {unexpected[:5]}...")
 
     model = model.to(device).eval()
     model.epoch = ckpt.get("epoch", None)
