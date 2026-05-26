@@ -14,7 +14,7 @@
 Inside a virtual environment, you can install the required packages using pip:
 
 ```bash
-pip install torch xarray zarr einops tqdm pyyaml huggingface_hub wandb gcsfs
+pip install torch xarray netCDF4 zarr einops tqdm pyyaml huggingface_hub wandb gcsfs
 ```
 
 ## 🌪️ Quickstart
