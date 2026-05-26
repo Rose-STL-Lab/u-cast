@@ -17,14 +17,14 @@ Files needed:
 Quick start (download checkpoint from HuggingFace, use GCS data):
 
     python run_inference_standalone.py \
-        --ckpt-path hf:salvaRC/u-cast/ucast.ckpt \
+        --ckpt-path hf:salv47/u-cast/ucast.ckpt \
         --data-dir gs://weatherbench2/datasets/era5 \
         --ic-start-dates 2020-01-01
 
 With local data, ensembling, more initial conditions, and scoring & logging to Weights & Biases:
 
     python run_inference_standalone.py \
-        --ckpt-path hf:salvaRC/u-cast/ucast.ckpt \
+        --ckpt-path hf:salv47/u-cast/ucast.ckpt \
         --data-dir /path/to/era5/data \
         --prediction-horizon 30 \
         --ensemble-size 10 \
@@ -34,8 +34,8 @@ With local data, ensembling, more initial conditions, and scoring & logging to W
 Deep ensemble (multiple checkpoints, members split evenly across models):
 
     python run_inference_standalone.py \
-        --ckpt-path hf:salvaRC/u-cast/ucast.ckpt \
-        --ckpt-paths hf:salvaRC/u-cast/ucast_de2.ckpt hf:salvaRC/u-cast/ucast_de3.ckpt hf:salvaRC/u-cast/ucast_de4.ckpt \
+        --ckpt-path hf:salv47/u-cast/ucast.ckpt \
+        --ckpt-paths hf:salv47/u-cast/ucast_de2.ckpt hf:salv47/u-cast/ucast_de3.ckpt hf:salv47/u-cast/ucast_de4.ckpt \
         --data-dir /path/to/era5/data \
         --ensemble-size 10 \
         --ic-start-dates 2020-01-01

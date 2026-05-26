@@ -23,7 +23,7 @@ Run out-of-the-box inference using a pretrained U-Cast checkpoint (downloaded fr
  using 5 ensemble members on two initial condition start dates, computing the RMSE and CRPS scores, and uploading them to Weights & Biases:
 ```bash
 python run_inference_standalone.py \
-    --ckpt-path hf:salvaRC/u-cast/ucast.ckpt \
+    --ckpt-path hf:salv47/u-cast/ucast.ckpt \
     --data-dir gs://weatherbench2/datasets/era5 \
     --ic-start-dates 2020-01-01 2020-07-04 \
     --ensemble-size 5 \
