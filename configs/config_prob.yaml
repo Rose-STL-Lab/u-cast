@@ -1,0 +1,54 @@
+# ==============================================================================
+# U-Cast STAGE 2: probabilistic CRPS fine-tuning on ERA5 1.5°.
+#
+# Inherits EVERYTHING from config_det.yaml and only overrides what differs for
+# the short probabilistic stage: the CRPS loss, a 2-member training ensemble,
+# the higher Muon/AdamW learning rates, the shorter schedule, and the path to
+# the Stage-1 (deterministic) checkpoint to warm-start from.
+#
+# Run with:
+#   python run.py --config-name config_prob \
+#       datamodule.data_dir=/path/to/data \
+#       module.from_pretrained_local_path=/path/to/stage1/checkpoints \
+#       module.from_pretrained_checkpoint_run_id=<stage1_run_id>
+#
+# For a deep ensemble (paper Stage 3), repeat this stage with different `seed=`
+# values, each warm-starting from the SAME Stage-1 checkpoint.
+# ==============================================================================
+defaults:
+  - config_det
+  - _self_
+
+trainer:
+  max_epochs: 12                  # Stage 2: short probabilistic fine-tuning (early stop at epoch 8 to reproduce paper)
+
+model:
+  loss_function: wcrps              # Unbiased (fair) CRPS
+  num_training_ensemble_members: 2  # M=2 MC-Dropout members per step
+
+module:
+  optimizer:
+    lr: 7.0e-05
+    weight_decay: 0.1
+    muon:
+      lr: 0.007
+      wd: 0
+  scheduler:
+    max_epochs: ${trainer.max_epochs}
+  monitor: val/avg/crps               # probabilistic metric (ensemble validation)
+  num_predictions: 5                  # ensemble members used at validation time
+  num_predictions_in_memory: 5
+  # REQUIRED: warm-start from the Stage-1 deterministic checkpoint.
+  #   from_pretrained_local_path:          dir holding the checkpoint(s), or a direct .ckpt file
+  #   from_pretrained_checkpoint_run_id:   the Stage-1 run id (used to locate <local_path>/<run_id>/<filename>)
+  #   from_pretrained_checkpoint_filename: filename within that dir (ignored if local_path is a file)
+  from_pretrained_local_path: ???
+  from_pretrained_checkpoint_run_id: ???
+  from_pretrained_checkpoint_filename: last.ckpt
+
+datamodule:
+  batch_size_per_gpu: 4              # smaller batch necessary than in stage 1
+
+callbacks:
+  model_checkpoint:
+    monitor: val/avg/crps

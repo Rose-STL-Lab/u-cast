@@ -10,9 +10,9 @@ Install:
     pip install torch xarray netCDF4 zarr einops tqdm pyyaml huggingface_hub wandb gcsfs
 
 Files needed:
-    1. Checkpoint (.ckpt) — local path or ``hf:<repo>/<file>`` to download from HuggingFace Hub (default)
-    2. ERA5 data directory — local path or GCS (gs://weatherbench2/datasets/era5; default)
-    3. Normalization statistics — included in this repo at ``data/stats/`` (used by default)
+    1. Checkpoint (.ckpt): local path or ``hf:<repo>/<file>`` to download from HuggingFace Hub (default)
+    2. ERA5 data directory: local path or GCS (gs://weatherbench2/datasets/era5; default)
+    3. Normalization statistics: included in this repo at ``data/stats/`` (used by default)
 
 Quick start (download checkpoint from HuggingFace, use GCS data):
 

@@ -1,0 +1,41 @@
+[project]
+name = "u-cast"
+version = "0.1.0"
+description = "Training code for the ICML 2026 paper: U-Cast: A Surprisingly Simple and Efficient Frontier AI Probabilistic Weather Forecaster"
+authors = [
+    { name = "Salva Rühling Cachay", email = "salvaruehling@gmail.com" },
+]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "pytorch-lightning>=2.0",
+    "tensordict",
+    "hydra-core",
+    "omegaconf",
+    "einops",
+    "xarray",
+    "zarr",
+    "netCDF4",
+    "huggingface_hub",
+    "wandb",
+    "tqdm",
+    "numpy",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "black"]
+
+[tool.black]
+line-length = 119
+target_version = ["py310"]
+
+[tool.ruff]
+lint.ignore = ["E501", "F821"]
+lint.select = ["E", "F", "I", "W"]
+line-length = 119
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+known-first-party = ["src"]

@@ -1,0 +1,305 @@
+# ==============================================================================
+# U-Cast STAGE 1: deterministic pre-training on ERA5 1.5° (weighted MAE).
+#
+# This is the base config. configs/config_prob.yaml inherits from it and only
+# overrides what changes for Stage 2 (probabilistic CRPS fine-tuning).
+#
+# Run with:
+#   python run.py --config-name config_det datamodule.data_dir=/path/to/data
+# Values set to `???` are mandatory and MUST be provided on the command line or overriden here.
+# ==============================================================================
+
+# ── Paths (set these for your environment) ────────────────────────────────────
+work_dir: ./results
+ckpt_dir: ${work_dir}/checkpoints/
+log_dir: ${work_dir}/logs/
+
+# ── Run settings ──────────────────────────────────────────────────────────────
+seed: 11
+print_config: true
+ignore_warnings: true
+eval_mode: null    # "validate" to run validation from a checkpoint (no training); leave null to train
+ckpt_path: null    # path to a checkpoint to resume training, or required when eval_mode=validate
+
+# ── Trainer ───────────────────────────────────────────────────────────────────
+trainer:
+  _target_: pytorch_lightning.Trainer
+  accelerator: gpu
+  devices: 1                          # override with e.g. [0,1,2,3] for multi-GPU
+  strategy: ddp_find_unused_parameters_false
+  num_nodes: 1
+  max_epochs: 100                     # Stage 1: long, cheap deterministic pre-training
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1          # auto-derived from batch_size / batch_size_per_gpu / #GPUs
+  precision: 16
+  num_sanity_val_steps: 0
+  deterministic: false
+  benchmark: false
+
+# ── Model architecture (DhariwalUNet / ADM) ───────────────────────────────────
+model:
+  _target_: src.models.networks_edm.DhariwalUNet
+  model_channels: 320
+  channel_mult: [1, 2, 3, 4]
+  num_blocks: 4
+  dropout: 0.1                        # MC-Dropout rate (acts as a regularizer in Stage 1)
+  loss_function: wmae                 # Stage 1: spatially-weighted MAE (= CRPS for a single member)
+  num_training_ensemble_members: 1
+  attn_levels: [2, 3]
+
+# ── Data module ───────────────────────────────────────────────────────────────
+datamodule:
+  _target_: src.datamodules.era5.ERA5DataModule
+  data_dir: ???                       # REQUIRED: directory containing the .zarr dataset
+  dataset: 1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr
+  data_dir_stats: "data/stats/"               # if null, stats are looked up next to data_dir
+  batch_size: 48                      # EFFECTIVE (global) batch size
+  batch_size_per_gpu: 8              # per-GPU micro-batch; gradient accumulation makes up the rest
+  eval_batch_size: 12
+  num_workers: 8
+  pin_memory: true
+  prefetch_factor: 3
+  persistent_workers: true
+  window: 2
+  horizon: 1
+  hourly_resolution: 12
+  train_slice:
+    - ["1979-01-01T00:00:00", "2019-12-31T23:00:00"]
+    - ["1979-01-01T06:00:00", "2019-12-31T23:00:00"]
+  val_slice: ["2020-01-01", "2020-12-31 23:59:59"]
+  max_val_samples: 36
+  prediction_horizon: 4
+  possible_initial_times_eval: [0, 12]
+  static_fields:
+    - land_sea_mask
+    - geopotential_at_surface
+  forcing_fields:
+    - year_progress_sin
+    - year_progress_cos
+    - day_progress_sin
+    - day_progress_cos
+  input_vars:
+    - mean_sea_level_pressure
+    - 10m_u_component_of_wind
+    - 10m_v_component_of_wind
+    - 2m_temperature
+    - sea_surface_temperature
+    - geopotential_50
+    - geopotential_100
+    - geopotential_150
+    - geopotential_200
+    - geopotential_250
+    - geopotential_300
+    - geopotential_400
+    - geopotential_500
+    - geopotential_600
+    - geopotential_700
+    - geopotential_850
+    - geopotential_925
+    - geopotential_1000
+    - specific_humidity_50
+    - specific_humidity_100
+    - specific_humidity_150
+    - specific_humidity_200
+    - specific_humidity_250
+    - specific_humidity_300
+    - specific_humidity_400
+    - specific_humidity_500
+    - specific_humidity_600
+    - specific_humidity_700
+    - specific_humidity_850
+    - specific_humidity_925
+    - specific_humidity_1000
+    - temperature_50
+    - temperature_100
+    - temperature_150
+    - temperature_200
+    - temperature_250
+    - temperature_300
+    - temperature_400
+    - temperature_500
+    - temperature_600
+    - temperature_700
+    - temperature_850
+    - temperature_925
+    - temperature_1000
+    - u_component_of_wind_50
+    - u_component_of_wind_100
+    - u_component_of_wind_150
+    - u_component_of_wind_200
+    - u_component_of_wind_250
+    - u_component_of_wind_300
+    - u_component_of_wind_400
+    - u_component_of_wind_500
+    - u_component_of_wind_600
+    - u_component_of_wind_700
+    - u_component_of_wind_850
+    - u_component_of_wind_925
+    - u_component_of_wind_1000
+    - v_component_of_wind_50
+    - v_component_of_wind_100
+    - v_component_of_wind_150
+    - v_component_of_wind_200
+    - v_component_of_wind_250
+    - v_component_of_wind_300
+    - v_component_of_wind_400
+    - v_component_of_wind_500
+    - v_component_of_wind_600
+    - v_component_of_wind_700
+    - v_component_of_wind_850
+    - v_component_of_wind_925
+    - v_component_of_wind_1000
+    - vertical_velocity_50
+    - vertical_velocity_100
+    - vertical_velocity_150
+    - vertical_velocity_200
+    - vertical_velocity_250
+    - vertical_velocity_300
+    - vertical_velocity_400
+    - vertical_velocity_500
+    - vertical_velocity_600
+    - vertical_velocity_700
+    - vertical_velocity_850
+    - vertical_velocity_925
+    - vertical_velocity_1000
+  output_vars:
+    - mean_sea_level_pressure
+    - 10m_u_component_of_wind
+    - 10m_v_component_of_wind
+    - 2m_temperature
+    - sea_surface_temperature
+    - geopotential_50
+    - geopotential_100
+    - geopotential_150
+    - geopotential_200
+    - geopotential_250
+    - geopotential_300
+    - geopotential_400
+    - geopotential_500
+    - geopotential_600
+    - geopotential_700
+    - geopotential_850
+    - geopotential_925
+    - geopotential_1000
+    - specific_humidity_50
+    - specific_humidity_100
+    - specific_humidity_150
+    - specific_humidity_200
+    - specific_humidity_250
+    - specific_humidity_300
+    - specific_humidity_400
+    - specific_humidity_500
+    - specific_humidity_600
+    - specific_humidity_700
+    - specific_humidity_850
+    - specific_humidity_925
+    - specific_humidity_1000
+    - temperature_50
+    - temperature_100
+    - temperature_150
+    - temperature_200
+    - temperature_250
+    - temperature_300
+    - temperature_400
+    - temperature_500
+    - temperature_600
+    - temperature_700
+    - temperature_850
+    - temperature_925
+    - temperature_1000
+    - u_component_of_wind_50
+    - u_component_of_wind_100
+    - u_component_of_wind_150
+    - u_component_of_wind_200
+    - u_component_of_wind_250
+    - u_component_of_wind_300
+    - u_component_of_wind_400
+    - u_component_of_wind_500
+    - u_component_of_wind_600
+    - u_component_of_wind_700
+    - u_component_of_wind_850
+    - u_component_of_wind_925
+    - u_component_of_wind_1000
+    - v_component_of_wind_50
+    - v_component_of_wind_100
+    - v_component_of_wind_150
+    - v_component_of_wind_200
+    - v_component_of_wind_250
+    - v_component_of_wind_300
+    - v_component_of_wind_400
+    - v_component_of_wind_500
+    - v_component_of_wind_600
+    - v_component_of_wind_700
+    - v_component_of_wind_850
+    - v_component_of_wind_925
+    - v_component_of_wind_1000
+    - vertical_velocity_50
+    - vertical_velocity_100
+    - vertical_velocity_150
+    - vertical_velocity_200
+    - vertical_velocity_250
+    - vertical_velocity_300
+    - vertical_velocity_400
+    - vertical_velocity_500
+    - vertical_velocity_600
+    - vertical_velocity_700
+    - vertical_velocity_850
+    - vertical_velocity_925
+    - vertical_velocity_1000
+
+# ── Lightning module (training / optimizer / scheduler) ───────────────────────
+module:
+  _target_: src.experiment.UCastExperiment
+  optimizer:
+    name: adamw                       # AdamW handles 1D params; Muon handles the 2D weight matrices
+    lr: 3.0e-04
+    weight_decay: 0.1
+    eps: 1.0e-08
+    betas: [0.9, 0.95]
+    muon:
+      momentum: 0.95
+      lr: 0.003
+      wd: 0.03
+  scheduler:
+    _target_: src.optimization.lr_scheduler.LinearWarmupCosineAnnealingLR
+    warmup_steps: 1500
+    max_epochs: ${trainer.max_epochs}
+    warmup_start_lr: 1.0e-08
+    eta_min: 1.0e-08
+    last_epoch: -1
+  monitor: val/avg/rmse               # deterministic metric (no ensemble in Stage 1)
+  mode: min
+  ema_decay: 0.9999
+  conv_padding_mode_global: circular_height_only
+  num_predictions: 1                  # deterministic validation: single forecast
+  num_predictions_in_memory: 1
+  verbose: true
+
+# ── Callbacks ─────────────────────────────────────────────────────────────────
+callbacks:
+  model_checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: val/avg/rmse
+    mode: min
+    save_top_k: 1
+    save_last: true
+    verbose: true
+    dirpath: ${ckpt_dir}
+    filename: ucast_era5_epoch{epoch:03d}
+    auto_insert_metric_name: false
+  early_stopping: null
+  learning_rate_logging:
+    _target_: pytorch_lightning.callbacks.LearningRateMonitor
+
+# ── Logger (W&B: set entity/project for your account, or remove to disable) ──
+logger:
+  wandb:
+    _target_: src.utilities.wandb_utils.MyWandbLogger
+    entity: null          # set to your W&B entity/username
+    project: u-cast
+    name: null            # auto-generated if null
+    mode: online          # "online" | "offline" | "disabled"
+    save_dir: ${work_dir}
+    log_model: false
+    resume: allow
+    id: null              # set to resume a specific W&B run
