@@ -7,7 +7,7 @@ producing an xarray Dataset of forecasts. Optionally scores predictions with
 area-weighted CRPS and ensemble-mean RMSE (--score) and logs to W&B (--wandb-project).
 
 Install:
-    pip install torch xarray zarr einops tqdm pyyaml huggingface_hub wandb gcsfs
+    pip install torch xarray netCDF4 zarr einops tqdm pyyaml huggingface_hub wandb gcsfs
 
 Files needed:
     1. Checkpoint (.ckpt) — local path or ``hf:<repo>/<file>`` to download from HuggingFace Hub (default)
@@ -43,7 +43,10 @@ Deep ensemble (multiple checkpoints, members split evenly across models):
 -> Forecasts are not saved to disk by default; add ``--output-path forecasts.nc`` to save.
 -> Set the GPU device with e.g. ``--device cuda:1``.
 
-Compute (1.5-degree, H200 GPU): ~10 sec/IC for 10 member ensemble, 30 steps. ~12 GB GPU RAM.
+Compute (1.5-degree, H200 GPU): ~6 sec/IC for 10 member ensemble, 30 steps. ~12 GB GPU RAM.
+
+For torch.compile speedups, pass ``--compile`` to compile the model, which will slow down the first rollout
+ but cut the inference cost by ~50% for further rollouts. Compilation is disabled by default.
 
 Note: Models were trained on data up to 2019. Degradation is expected for dates far
 from the training period, especially at short lead times. 2020 is recommended.
@@ -71,7 +74,8 @@ from tqdm.auto import tqdm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
-
+torch.set_float32_matmul_precision("high")
+torch.backends.cudnn.benchmark = True
 
 # ════════════════════════════════════════════════════════════════════════
 # 1.  Circular-padding helpers
@@ -734,6 +738,13 @@ def _load_model_weights(model: DhariwalUNet, state_dict: dict):
         log.warning(f"Missing keys: {missing[:5]}... ({len(missing)} total)")
 
 
+def maybe_compile_model(model: nn.Module, compile_model: bool) -> nn.Module:
+    if not compile_model:
+        return model
+    log.info("Compiling model with torch.compile...")
+    return torch.compile(model, mode="reduce-overhead")
+
+
 @torch.inference_mode()
 def run_autoregressive_inference(
     model: DhariwalUNet,
@@ -787,11 +798,12 @@ def run_autoregressive_inference(
         dyn_cond_batch = dyn_cond.unsqueeze(0).expand(ensemble_size, -1, -1, -1)  # (N, 4, H, W)
 
         # ── Forward pass ──
-        pred_packed = model(
-            x_input,
-            dynamical_condition=dyn_cond_batch,
-            static_condition=static_batch,
-        )  # (N, C_out, H, W) – in residual-normalized space
+        with torch.amp.autocast("cuda", dtype=torch.float16):
+            pred_packed = model(
+                x_input,
+                dynamical_condition=dyn_cond_batch,
+                static_condition=static_batch,
+            )  # (N, C_out, H, W) – in residual-normalized space
         assert not torch.any(torch.isnan(pred_packed)), "Model output contains NaNs"
 
         # ── Post-process: residual → normalized → denormalized ──
@@ -811,22 +823,16 @@ def run_autoregressive_inference(
 
         # Store predictions and extract targets
         for var in var_names:
-            all_preds_raw[var].append(pred_denormed[var].cpu())  # (N, H, W)
-            if forcing_idx < dyn_raw[var].shape[0]:
-                all_targets_raw[var].append(dyn_raw[var][forcing_idx].cpu())  # (H, W)
-            else:
-                raise ValueError(
-                    f"Target time index {forcing_idx} out of bounds for variable {var} with shape {dyn_raw[var].shape}"
-                )
-
+            all_preds_raw[var].append(pred_denormed[var])  # (N, H, W)
+            all_targets_raw[var].append(dyn_raw[var][forcing_idx])  # (H, W)
         # Shift window forward: each member uses its own prediction, so members diverge via dropout.
         window_frames_normed = window_frames_normed[1:] + [pred_full_normed]
 
     # Stack lead times
-    preds_stacked = {var: torch.stack(all_preds_raw[var], dim=1) for var in var_names}
+    preds_stacked = {var: torch.stack(all_preds_raw[var], dim=1).cpu() for var in var_names}
     # preds_stacked[var].shape = (ensemble, horizon, H, W)
 
-    targets_stacked = {var: torch.stack(all_targets_raw[var], dim=0) for var in var_names}
+    targets_stacked = {var: torch.stack(all_targets_raw[var], dim=0).cpu() for var in var_names}
     # targets_stacked[var].shape = (horizon, H, W)
 
     return dict(preds_raw=preds_stacked, targets_raw=targets_stacked)
@@ -854,6 +860,7 @@ def _run_deep_ensemble_all_ics(
     ensemble_size: int,
     hourly_resolution: int,
     device: str,
+    compile_model: bool,
 ) -> Tuple[List[Dict[str, Any]], List[xr.Dataset]]:
     """
     Deep-ensemble inference over all ICs with model-outer / IC-inner loop order.
@@ -873,6 +880,7 @@ def _run_deep_ensemble_all_ics(
     for model_idx, (ckpt_path, cfg, n_members) in enumerate(zip(ckpt_paths, configs, members_per_model)):
         log.info(f"\n[DeepEnsemble] Loading model {model_idx + 1}/{n_models}: " f"{ckpt_path} — {n_members} member(s)")
         model = load_model_from_checkpoint(ckpt_path, cfg, device=device)
+        model = maybe_compile_model(model, compile_model)
 
         for ic_idx, ic_dt in enumerate(ic_dates):
             log.info(f"  IC {ic_idx + 1}/{len(ic_dates)}: {ic_dt}")
@@ -1148,7 +1156,11 @@ def main():
         "If omitted, --config-path is reused for every model.",
     )
     parser.add_argument(
-        "--data-dir", type=str, nargs="+", default=["gs://weatherbench2/datasets/era5"], help="Data directory (local or GCS). Can pass multiple."
+        "--data-dir",
+        type=str,
+        nargs="+",
+        default=["gs://weatherbench2/datasets/era5"],
+        help="Data directory (local or GCS). Can pass multiple.",
     )
     parser.add_argument(
         "--stats-dir",
@@ -1157,7 +1169,10 @@ def main():
         help="Directory with normalization statistics (default: data/wb2/stats from this repo)",
     )
     parser.add_argument(
-        "--prediction-horizon", type=int, default=30, help="Number of autoregressive steps (default: 30, so 15 days at 12h resolution)"
+        "--prediction-horizon",
+        type=int,
+        default=30,
+        help="Number of autoregressive steps (default: 30, so 15 days at 12h resolution)",
     )
     parser.add_argument(
         "--ensemble-size",
@@ -1178,6 +1193,12 @@ def main():
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu",
+    )
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Compile the model with torch.compile(model). Default: false.",
     )
     parser.add_argument("--score", action="store_true", help="Compute area-weighted CRPS and RMSE")
     parser.add_argument(
@@ -1271,18 +1292,20 @@ def main():
             ensemble_size=ensemble_size,
             hourly_resolution=hourly_resolution,
             device=args.device,
+            compile_model=args.compile,
         )
     else:
         assert len(ckpt_path_list) == 1, "Single-model mode should have exactly one checkpoint path"
         model = load_model_from_checkpoint(ckpt_path_list[0], cfg, device=args.device)
+        model = maybe_compile_model(model, args.compile)
         log.info(f"Model loaded. Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
         all_results = []
         all_datasets = []
         for ic_idx, ic_dt in enumerate(ic_dates):
-            log.info(f"\n{'='*60}")
+            log.info(f"\n{'=' * 60}")
             log.info(f"IC {ic_idx + 1}/{len(ic_dates)}: {ic_dt}")
-            log.info(f"{'='*60}")
+            log.info(f"{'=' * 60}")
 
             batch = extract_batch_for_ic(
                 ds=ds,
