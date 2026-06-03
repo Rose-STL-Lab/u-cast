@@ -101,11 +101,10 @@ class UCastExperiment(pl.LightningModule):
         # Infer input/output/spatial dimensions, instantiate model, optionally warm-start.
         self.dims = get_dims_of_dataset(self.datamodule_config)
         self.model = self.instantiate_model()
-        # EMA wrapper around the model.
-        self.model_ema = LitEma(model=self.model, decay=ema_decay)
-
         self.reload_weights_from_pretrained_checkpoint()   # Reload weights for stage 2 fine-tuning
 
+        # EMA wrapper around the model.
+        self.model_ema = LitEma(model=self.model, decay=ema_decay)
         self._start_validation_epoch_time = self._start_epoch_time = None
         # Default epoch / global step values used when running validation without a Trainer.fit().
         self._default_epoch = self._default_global_step = 0
@@ -183,6 +182,7 @@ class UCastExperiment(pl.LightningModule):
             ckpt_filename=self.hparams.from_pretrained_checkpoint_filename,
             model=self,
             print_name="Pretrained model",
+            strict=False
         )
 
     def forward(self, *args, **kwargs) -> Any:

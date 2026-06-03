@@ -64,10 +64,11 @@ def reload_model_from_config_and_ckpt(
     *,
     model: pytorch_lightning.LightningModule,
     print_name: str = "",
+    strict: bool = True,
 ) -> pytorch_lightning.LightningModule:
     """Load weights from ``ckpt_path`` into the given ``model``."""
     model_state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    model.load_state_dict(model_state["state_dict"], strict=True)
+    model.load_state_dict(model_state["state_dict"], strict=strict)
 
     file_size = os.path.getsize(ckpt_path)
     name = f"{print_name}: " if print_name else ""
